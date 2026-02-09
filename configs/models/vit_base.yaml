@@ -1,0 +1,2 @@
+model:
+  backbone: vit_base_patch16_224
