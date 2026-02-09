@@ -1,0 +1,3 @@
+data:
+  dataset: SVHN
+  val_split: 0.1
