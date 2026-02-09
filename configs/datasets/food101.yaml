@@ -1,0 +1,3 @@
+data:
+  dataset: Food101
+  val_split: 0.1
