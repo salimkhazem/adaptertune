@@ -1,0 +1,8 @@
+train:
+  epochs: 3
+  lr: 1.0e-3
+  warmup_epochs: 0
+data:
+  batch_size: 128
+logging:
+  exp_name: quick_sanity
