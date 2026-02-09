@@ -1,0 +1,51 @@
+seed: 42
+deterministic: true
+
+system:
+  device: cuda
+  devices: "0"
+  precision: fp32
+
+logging:
+  output_dir: results
+  exp_name: base
+  log_every: 50
+  save_ckpt: true
+
+model:
+  backbone: vit_small_patch16_224
+  pretrained: true
+
+method:
+  name: adapter_tune  # head_only | full_finetune | adapter_tune
+  adapter_rank: 16
+  adapter_every: 1
+  adapter_init: zero  # zero | small
+  adapter_alpha: 1.0
+
+train:
+  epochs: 50
+  lr: 1.0e-3
+  weight_decay: 5.0e-2
+  opt: adamw
+  sched: cosine
+  warmup_epochs: 5
+  grad_clip: 1.0
+  label_smoothing: 0.0
+
+data:
+  dataset: CIFAR10
+  root: data
+  val_split: 0.1
+  batch_size: 128
+  num_workers: 8
+  pin_memory: true
+  img_size: 224
+
+metrics:
+  topk: [1, 5]
+
+repro:
+  save_config: true
+  save_env: true
+  save_code_state: true
