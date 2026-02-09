@@ -1,0 +1,3 @@
+data:
+  dataset: CIFAR100
+  val_split: 0.1
