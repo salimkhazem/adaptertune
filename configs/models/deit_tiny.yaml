@@ -1,0 +1,2 @@
+model:
+  backbone: deit_tiny_patch16_224
