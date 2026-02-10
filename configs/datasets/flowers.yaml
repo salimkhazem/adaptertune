@@ -1,0 +1,3 @@
+data:
+  dataset: Flowers102
+  val_split: 0.1
