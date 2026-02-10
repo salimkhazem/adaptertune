@@ -1,0 +1,3 @@
+data:
+  dataset: TinyImageNet
+  val_split: 0.1
