@@ -1,0 +1,4 @@
+data:
+  dataset: ImageNetR
+  val_split: 0.1
+  test_split: 0.2
