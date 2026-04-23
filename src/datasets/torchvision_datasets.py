@@ -8,8 +8,34 @@ from torchvision import datasets, transforms
 from .splits import make_split_indices, make_split_indices_threeway
 from ..utils.seed import make_generator, seed_worker
 
+try:
+    from datasets import Dataset as HFDataset
+    from datasets import concatenate_datasets
+except ImportError:  # pragma: no cover - optional dependency for local ImageNet-1K.
+    HFDataset = None
+    concatenate_datasets = None
+
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+class ArrowImageClassificationDataset(torch.utils.data.Dataset):
+    def __init__(self, hf_dataset, transform=None):
+        self.hf_dataset = hf_dataset
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.hf_dataset)
+
+    def __getitem__(self, idx: int):
+        sample = self.hf_dataset[idx]
+        image = sample["image"]
+        if hasattr(image, "convert"):
+            image = image.convert("RGB")
+        target = int(sample["label"])
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, target
 
 
 def build_transforms(img_size: int = 224):
@@ -39,15 +65,13 @@ def _prepare_tiny_imagenet_val(root: str) -> Path:
     ann_path = val_dir / "val_annotations.txt"
     organized = val_dir / "organized_by_class"
 
-    if organized.exists():
-        return organized
-
     if not images_dir.exists() or not ann_path.exists():
         raise FileNotFoundError(
             f"TinyImageNet val split not found under {val_dir}. Expected images/ and val_annotations.txt."
         )
 
     organized.mkdir(parents=True, exist_ok=True)
+    missing_sources: list[str] = []
     with open(ann_path, "r", encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split("\t")
@@ -55,17 +79,33 @@ def _prepare_tiny_imagenet_val(root: str) -> Path:
                 continue
             image_name, class_name = parts[0], parts[1]
             src = images_dir / image_name
+            if not src.exists():
+                missing_sources.append(image_name)
+                continue
             class_dir = organized / class_name
             class_dir.mkdir(parents=True, exist_ok=True)
             dst = class_dir / image_name
-            if dst.exists() or not src.exists():
+
+            # Repair stale/broken links from previous runs before creating the entry.
+            if dst.is_symlink() and not dst.exists():
+                dst.unlink()
+            if dst.exists():
                 continue
             try:
-                dst.symlink_to(src)
+                # Use absolute path to avoid creating links broken by cwd-relative targets.
+                dst.symlink_to(src.resolve())
             except Exception:
                 import shutil
 
                 shutil.copy2(src, dst)
+
+    if missing_sources:
+        preview = ", ".join(missing_sources[:5])
+        more = "" if len(missing_sources) <= 5 else f", ... (+{len(missing_sources) - 5} more)"
+        raise FileNotFoundError(
+            "TinyImageNet val images missing from val/images. "
+            f"Examples: {preview}{more}."
+        )
     return organized
 
 
@@ -80,6 +120,59 @@ def _imagenet_r_paths(root: str) -> tuple[Path, Path | None]:
     if train_dir.exists():
         return train_dir, test_dir if test_dir.exists() else None
     return base, test_dir if test_dir.exists() else None
+
+
+def _is_imagenet1k_arrow_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "dataset_info.json").exists() and any(path.glob("imagenet-1k-*.arrow"))
+
+
+def _imagenet1k_arrow_root(root: str) -> Path:
+    root_path = Path(root).expanduser()
+    if _is_imagenet1k_arrow_dir(root_path):
+        return root_path
+
+    candidate_roots = [
+        root_path / "imagenet-1k" / "default" / "0.0.0",
+        root_path / "ILSVRC___imagenet-1k" / "default" / "0.0.0",
+        root_path / "imagenet-1k",
+        root_path / "ILSVRC___imagenet-1k",
+    ]
+    for candidate_root in candidate_roots:
+        if _is_imagenet1k_arrow_dir(candidate_root):
+            return candidate_root
+        if candidate_root.exists():
+            for subdir in sorted(candidate_root.iterdir()):
+                if _is_imagenet1k_arrow_dir(subdir):
+                    return subdir
+
+    for info_path in root_path.rglob("dataset_info.json"):
+        if _is_imagenet1k_arrow_dir(info_path.parent):
+            return info_path.parent
+
+    raise FileNotFoundError(
+        "Could not locate ImageNet-1K Arrow shards under "
+        f"{root_path}. Expected a directory containing dataset_info.json and imagenet-1k-*.arrow files."
+    )
+
+
+def _load_imagenet1k_split(root: str, split: str):
+    if HFDataset is None or concatenate_datasets is None:
+        raise ImportError(
+            "ImageNet-1K Arrow loading requires the optional `datasets` package. "
+            "Install it with `pip install datasets`."
+        )
+
+    arrow_root = _imagenet1k_arrow_root(root)
+    shard_paths = sorted(arrow_root.glob(f"imagenet-1k-{split}-*.arrow"))
+    if not shard_paths:
+        raise FileNotFoundError(
+            f"No ImageNet-1K `{split}` Arrow shards found under {arrow_root}."
+        )
+
+    datasets_list = [HFDataset.from_file(str(path)) for path in shard_paths]
+    if len(datasets_list) == 1:
+        return datasets_list[0]
+    return concatenate_datasets(datasets_list)
 
 
 def _get_dataset(name: str, root: str, train: bool, transform):
@@ -135,6 +228,9 @@ def _get_dataset(name: str, root: str, train: bool, transform):
             return datasets.ImageFolder(str(test_root), transform=transform)
         # Fallback: full dataset used when create_dataloaders performs deterministic 3-way split.
         return datasets.ImageFolder(str(train_root), transform=transform)
+    if name == "ImageNet1K":
+        split = "train" if train else "validation"
+        return ArrowImageClassificationDataset(_load_imagenet1k_split(root, split), transform=transform)
     raise ValueError(f"Unknown dataset: {name}")
 
 
@@ -157,6 +253,8 @@ def _num_classes(name: str) -> int:
         return 200
     if name == "ImageNetR":
         return 200
+    if name == "ImageNet1K":
+        return 1000
     raise ValueError(f"Unknown dataset: {name}")
 
 
@@ -200,6 +298,21 @@ def create_dataloaders(cfg: dict, seed: int) -> Tuple[DataLoader, DataLoader, Da
             )
             train_set = Subset(train_full, train_idx)
             val_set = Subset(_get_dataset(name, root, train=True, transform=eval_tf), val_idx)
+    elif name == "ImageNet1K":
+        train_base = _load_imagenet1k_split(root, "train")
+        val_base = _load_imagenet1k_split(root, "validation")
+        train_idx, val_idx = make_split_indices(
+            dataset_len=len(train_base),
+            root=root,
+            name=name,
+            val_split=val_split,
+            seed=seed,
+        )
+        train_full = ArrowImageClassificationDataset(train_base, transform=train_tf)
+        eval_full = ArrowImageClassificationDataset(train_base, transform=eval_tf)
+        train_set = Subset(train_full, train_idx)
+        val_set = Subset(eval_full, val_idx)
+        test_set = ArrowImageClassificationDataset(val_base, transform=eval_tf)
     else:
         train_full = _get_dataset(name, root, train=True, transform=train_tf)
         test_set = _get_dataset(name, root, train=False, transform=eval_tf)
