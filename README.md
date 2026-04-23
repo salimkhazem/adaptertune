@@ -1,6 +1,6 @@
-# AdapterTune ViT (ECCV 2026)
+# ZILA: Zero-Initialized Low-Rank Adapters for Frozen Transformers (NeurIPS 2026)
 
-AdapterTune ViT adapts pretrained ViTs by freezing the backbone and inserting small residual adapters into transformer blocks. Only adapters and the classification head are trained.
+ZILA ViT adapts pretrained ViTs by freezing the backbone and inserting small residual adapters into transformer blocks. Only adapters and the classification head are trained.
 
 ## Quickstart
 
