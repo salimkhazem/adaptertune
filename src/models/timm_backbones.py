@@ -20,6 +20,25 @@ def _set_trainable(module: nn.Module, trainable: bool) -> None:
         p.requires_grad = trainable
 
 
+def _reset_head(model: nn.Module, num_classes: int) -> None:
+    if hasattr(model, "reset_classifier"):
+        try:
+            model.reset_classifier(num_classes=num_classes)
+            return
+        except TypeError:
+            model.reset_classifier(num_classes)
+            return
+
+    head = _get_head(model)
+    if hasattr(head, "reset_parameters"):
+        head.reset_parameters()
+        return
+
+    for child in head.modules():
+        if child is not head and hasattr(child, "reset_parameters"):
+            child.reset_parameters()
+
+
 def _pick_pretrained_variant(backbone: str) -> str | None:
     candidates = timm.list_models(f"{backbone}*", pretrained=True)
     if not candidates:
@@ -63,8 +82,11 @@ def create_backbone(backbone: str, num_classes: int, pretrained: bool) -> nn.Mod
 def prepare_model(cfg_model: Dict, cfg_method: Dict, num_classes: int) -> nn.Module:
     backbone = cfg_model["backbone"]
     pretrained = bool(cfg_model.get("pretrained", True))
+    reset_head = bool(cfg_model.get("reset_head", False))
 
     model = create_backbone(backbone, num_classes=num_classes, pretrained=pretrained)
+    if reset_head:
+        _reset_head(model, num_classes)
     method = cfg_method["name"]
 
     if method == "full_finetune":
